@@ -48,6 +48,91 @@ static uint8_t at45db_read_status_register(struct flashctx *flash, uint8_t *stat
 	return ret;
 }
 
+/* Read Extended Device Information (EDI) from RDID response.
+ * E-series AT45DB chips have EDI = 0x0100 in bytes 4-5 of RDID response.
+ * Returns 0 on success, non-zero on failure. */
+static int at45db_read_edi(struct flashctx *flash, uint16_t *edi)
+{
+	static const uint8_t cmd[] = { JEDEC_RDID };
+	uint8_t readarr[5];
+
+	int ret = spi_send_command(flash, sizeof(cmd), sizeof(readarr), cmd, readarr);
+	if (ret != 0) {
+		msg_cerr("Reading Extended Device Information failed!\n");
+		return ret;
+	}
+
+	/* EDI is in bytes 3-4 (0-indexed), big-endian */
+	*edi = (readarr[3] << 8) | readarr[4];
+	msg_cdbg("AT45DB Extended Device Information (EDI): 0x%04x\n", *edi);
+	return 0;
+}
+
+/* Probe function for AT45DB E-series chips.
+ * E-series chips (e.g., AT45DB641E) share JEDEC IDs with D-series predecessors
+ * but can be distinguished by Extended Device Information (EDI) = 0x0100.
+ * This is necessary because AT45DB641E and AT45DB642D have the same JEDEC ID
+ * but fundamentally different page sizes (256/264 vs 1024/1056 bytes). */
+int probe_spi_at45db_e(struct flashctx *flash)
+{
+	uint8_t status;
+	uint16_t edi;
+	struct flashchip *chip = flash->chip;
+
+	if (!probe_spi_rdid(flash))
+		return 0;
+
+	/* Verify this is an E-series chip by checking EDI */
+	if (at45db_read_edi(flash, &edi) != 0)
+		return 0;
+
+	/* E-series chips have EDI = 0x0100 */
+	if (edi != 0x0100) {
+		msg_cdbg("%s: EDI 0x%04x does not match E-series (expected 0x0100)\n",
+			 __func__, edi);
+		return 0;
+	}
+
+	msg_cdbg("%s: E-series chip confirmed (EDI=0x%04x)\n", __func__, edi);
+
+	/* Read status register to determine page size mode */
+	if (at45db_read_status_register(flash, &status) != 0)
+		return 0;
+
+	/* We assume sane power-of-2 page sizes and adjust the chip attributes
+	 * in case this is not the case. */
+	if ((status & AT45DB_POWEROF2) == 0) {
+		chip->total_size = (chip->total_size / 32) * 33;
+		chip->page_size = (chip->page_size / 32) * 33;
+
+		unsigned int i, j;
+		for (i = 0; i < NUM_ERASEFUNCTIONS; i++) {
+			struct block_eraser *eraser = &chip->block_erasers[i];
+			for (j = 0; j < NUM_ERASEREGIONS; j++) {
+				eraser->eraseblocks[j].size =
+					(eraser->eraseblocks[j].size / 32) * 33;
+			}
+		}
+	}
+
+	switch (chip->page_size) {
+	case 256: chip->gran = WRITE_GRAN_256BYTES; break;
+	case 264: chip->gran = WRITE_GRAN_264BYTES; break;
+	case 512: chip->gran = WRITE_GRAN_512BYTES; break;
+	case 528: chip->gran = WRITE_GRAN_528BYTES; break;
+	case 1024: chip->gran = WRITE_GRAN_1024BYTES; break;
+	case 1056: chip->gran = WRITE_GRAN_1056BYTES; break;
+	default:
+		msg_cerr("%s: unknown page size %d.\n", __func__, chip->page_size);
+		return 0;
+	}
+
+	msg_cdbg2("%s: total size %i kB, page size %i B\n",
+		  __func__, chip->total_size, chip->page_size);
+
+	return 1;
+}
+
 int spi_disable_blockprotect_at45db(struct flashctx *flash)
 {
 	static const uint8_t cmd[4] = { AT45DB_DISABLE_PROTECT }; /* NB: 4 bytes magic number */
