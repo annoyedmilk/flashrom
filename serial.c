@@ -167,6 +167,10 @@ int serialport_config(fdtype fd, int baud)
 	dcb.ByteSize = 8;
 	dcb.Parity = NOPARITY;
 	dcb.StopBits = ONESTOPBIT;
+	dcb.fDtrControl = DTR_CONTROL_ENABLE;
+	dcb.fRtsControl = RTS_CONTROL_ENABLE;
+	dcb.fOutxCtsFlow = FALSE;
+	dcb.fOutxDsrFlow = FALSE;
 	if (!SetCommState(fd, &dcb)) {
 		msg_perr_strerror("Could not change serial port configuration: ");
 		return 1;
@@ -176,6 +180,17 @@ int serialport_config(fdtype fd, int baud)
 		return 1;
 	}
 	msg_pdbg("Baud rate is %ld.\n", dcb.BaudRate);
+	/* Set timeout values */
+	COMMTIMEOUTS timeouts = {0};
+	timeouts.ReadIntervalTimeout = 0;
+	timeouts.ReadTotalTimeoutMultiplier = 0;
+	timeouts.ReadTotalTimeoutConstant = 5000; /* 5 second timeout */
+	timeouts.WriteTotalTimeoutMultiplier = 0;
+	timeouts.WriteTotalTimeoutConstant = 5000; /* 5 second timeout */
+	if (!SetCommTimeouts(fd, &timeouts)) {
+		msg_perr_strerror("Could not set serial port timeouts: ");
+		return 1;
+	}
 #else
 	int custom_baud = (baud >= 0 && use_custom_baud(baud, sp_baudtable));
 	struct termios wanted, observed;
@@ -279,6 +294,18 @@ fdtype sp_openserport(char *dev, int baud)
 		free(dev2);
 	if (fd == INVALID_HANDLE_VALUE) {
 		msg_perr_strerror("Cannot open serial port: ");
+		return SER_INV_FD;
+	}
+	/* Set non-blocking timeouts immediately after opening to prevent hangs */
+	COMMTIMEOUTS initial_timeouts = {0};
+	initial_timeouts.ReadIntervalTimeout = MAXDWORD;
+	initial_timeouts.ReadTotalTimeoutMultiplier = 0;
+	initial_timeouts.ReadTotalTimeoutConstant = 0;
+	initial_timeouts.WriteTotalTimeoutMultiplier = 0;
+	initial_timeouts.WriteTotalTimeoutConstant = 1000; /* 1 second write timeout */
+	if (!SetCommTimeouts(fd, &initial_timeouts)) {
+		msg_perr_strerror("Could not set initial serial port timeouts: ");
+		CloseHandle(fd);
 		return SER_INV_FD;
 	}
 	if (serialport_config(fd, baud) != 0) {
