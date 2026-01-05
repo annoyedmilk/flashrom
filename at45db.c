@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: GPL-2.0-only
  * SPDX-FileCopyrightText: 2012 Aidan Thornton
  * SPDX-FileCopyrightText: 2013 Stefan Tauner
+ * SPDX-FileCopyrightText: 2025 Marco Müller
  */
 
 #include <string.h>
@@ -80,6 +81,10 @@ int probe_spi_at45db_e(struct flashctx *flash)
 {
 	uint16_t edi;
 
+	/* Use standard AT45DB probe first (RDID result is cached, fast fail for non-AT45DB) */
+	if (!probe_spi_at45db(flash))
+		return 0;
+
 	/* Verify this is an E-series chip by checking EDI */
 	if (at45db_read_edi(flash, &edi) != 0)
 		return 0;
@@ -91,9 +96,7 @@ int probe_spi_at45db_e(struct flashctx *flash)
 	}
 
 	msg_cdbg("%s: E-series chip confirmed (EDI=0x%04x)\n", __func__, edi);
-
-	/* Use standard AT45DB probe for the rest */
-	return probe_spi_at45db(flash);
+	return 1;
 }
 
 int spi_disable_blockprotect_at45db(struct flashctx *flash)

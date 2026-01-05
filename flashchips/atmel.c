@@ -1722,7 +1722,7 @@
 		/* does not support EWSR nor WREN and has no writable status register bits */
 		/* OTP: 128B total, 64B pre-programmed; read 0x77; write 0x9B */
 		.feature_bits	= FEATURE_OTP,
-		.tested		= TEST_UNTESTED,
+		.tested		= TEST_OK_PREW,
 		.probe		= PROBE_SPI_AT45DB_E,
 		.probe_timing	= TIMING_ZERO,
 		.block_erasers	=
